@@ -24,158 +24,7 @@ check_dependencies() {
 	fi
 }
 
-# Default directories to ignore (can be overridden with PROJECT_IGNORE_DIRS env var)
-get_ignore_patterns() {
-	local default_ignores=(
-		"node_modules"
-		"target"
-		"build"
-		"dist"
-		".git"
-		".svn"
-		".hg"
-		"vendor"
-		"__pycache__"
-		".pytest_cache"
-		".venv"
-		"venv"
-		".env"
-		"coverage"
-		".nyc_output"
-		".next"
-		".nuxt"
-		".cache"
-		"tmp"
-		"temp"
-		"logs"
-		".DS_Store"
-		"Thumbs.db"
-		".idea"
-		".vscode"
-		".vs"
-		"bin"
-		"obj"
-		".gradle"
-		".mvn"
-		"out"
-		".terraform"
-	)
-
-	# Use custom ignore list if provided, otherwise use defaults
-	if [[ -n "${PROJECT_IGNORE_DIRS:-}" ]]; then
-		echo "$PROJECT_IGNORE_DIRS"
-	else
-		printf "%s\n" "${default_ignores[@]}"
-	fi
-}
-
-# Check if a directory is a project root (has project indicators)
-is_project_root() {
-	local dir="$1"
-	local indicators=(
-		".git"
-		".svn"
-		".hg"
-		"package.json"
-		"Cargo.toml"
-		"go.mod"
-		"pyproject.toml"
-		"setup.py"
-		"pom.xml"
-		"build.gradle"
-		"Makefile"
-		"CMakeLists.txt"
-		"composer.json"
-		"Gemfile"
-		"mix.exs"
-		".project"
-		"*.sln"
-		"tsconfig.json"
-		"deno.json"
-		"requirements.txt"
-		"Pipfile"
-		"yarn.lock"
-		"package-lock.json"
-		"Dockerfile"
-		"docker-compose.yml"
-		"README.md"
-		"README.rst"
-		"README.txt"
-		".gitignore"
-	)
-
-	for indicator in "${indicators[@]}"; do
-		if [[ -e "$dir/$indicator" ]] || ls "$dir"/$indicator >/dev/null 2>&1; then
-			return 0
-		fi
-	done
-	return 1
-}
-
-# Build ripgrep glob patterns for ignoring directories
-build_rg_ignore_globs() {
-	local globs=""
-	while IFS= read -r ignore_dir; do
-		if [[ -n "$ignore_dir" ]]; then
-			globs="$globs --glob '!$ignore_dir/' --glob '!**/$ignore_dir/'"
-		fi
-	done < <(get_ignore_patterns)
-	echo "$globs"
-}
-
-# Find only actual project roots using ripgrep
-find_project_directories() {
-	local base_dir="$1"
-
-	# Get ignore globs for ripgrep
-	local ignore_globs=$(build_rg_ignore_globs)
-
-	# Find git repositories (primary project indicators)
-	local git_repos
-	git_repos=$(
-		eval "rg --hidden --files --glob '**/.git/config' $ignore_globs '$base_dir' 2>/dev/null" |
-			xargs -I {} dirname {} |
-			xargs -I {} dirname {} |
-			sort -u
-	)
-
-	# Build exclusion patterns for areas inside git repos
-	local git_excludes=""
-	if [[ -n "$git_repos" ]]; then
-		while IFS= read -r git_repo; do
-			if [[ -n "$git_repo" && "$git_repo" != "$base_dir" ]]; then
-				git_excludes="$git_excludes --glob '!${git_repo}/**'"
-			fi
-		done <<<"$git_repos"
-	fi
-
-	# Find other strong project indicators (but only if not in git repos)
-	# Focus on primary project files that clearly indicate a project root
-	local strong_projects
-	strong_projects=$(
-		eval "rg --files --type-add 'strongproject:*{package.json,Cargo.toml,go.mod,pyproject.toml,pom.xml,build.gradle,composer.json,Gemfile,mix.exs}' --type strongproject $ignore_globs $git_excludes '$base_dir' 2>/dev/null" |
-			xargs -I {} dirname {} |
-			sort -u
-	)
-
-	# Only return actual project roots
-	{
-		[[ -n "$git_repos" ]] && echo "$git_repos"
-		[[ -n "$strong_projects" ]] && echo "$strong_projects"
-
-		# Only include base directory if it's actually a project
-		if is_project_root "$base_dir"; then
-			echo "$base_dir"
-		fi
-	} | sort -u | while IFS= read -r dir; do
-		# Only include directories that actually exist and are true project roots
-		if [[ -d "$dir" ]] && is_project_root "$dir"; then
-			echo "$dir"
-		fi
-	done
-}
-
-# Select project directory using fzf
+# Select project directory using fzf with rg
 select_project_directory() {
 	local base_dir="$1"
 
@@ -188,37 +37,35 @@ select_project_directory() {
 		exit 1
 	fi
 
-	echo -e "${YELLOW}Searching for project directories in: $base_dir${NC}" >&2
+	echo -e "${YELLOW}Browsing directories in: $base_dir${NC}" >&2
 
-	# Find project directories using ripgrep
+	# Use rg to find .git directories, extract their parent directories
 	local selected_dir
 	selected_dir=$(
-		find_project_directories "$base_dir" |
-			sed "s|^$base_dir/||" |
-			sed "s|^$base_dir$|.|" |
-			sort |
-			fzf \
-				--prompt="Select project directory: " \
-				--preview="
-                if [[ {} == '.' ]]; then
-                    dir_path='$base_dir'
-                    echo -e '\033[0;32mBase Directory: $base_dir\033[0m'
-                else
-                    dir_path='$base_dir/{}'
-                    echo -e '\033[0;32mDirectory: $base_dir/{}\033[0m'
-                fi
-                
-                # Show if it's a project root
-                if [[ -e \"\$dir_path/.git\" ]] || [[ -e \"\$dir_path/package.json\" ]] || [[ -e \"\$dir_path/Cargo.toml\" ]] || [[ -e \"\$dir_path/go.mod\" ]] || [[ -e \"\$dir_path/pyproject.toml\" ]] || [[ -e \"\$dir_path/setup.py\" ]] || [[ -e \"\$dir_path/pom.xml\" ]] || [[ -e \"\$dir_path/Makefile\" ]]; then
-                    echo -e '\033[1;33m[PROJECT ROOT]\033[0m'
-                fi
-                
-                echo 'Contents:'
-                ls -la \"\$dir_path\" 2>/dev/null | head -15
-            " \
-				--preview-window="right:50%" \
-				--header="↑/↓: navigate, Enter: select, Esc: cancel" \
-				--height=70%
+		rg --files --hidden --glob "**/.git/config" "$base_dir" 2>/dev/null | \
+		xargs -I {} dirname {} | \
+		xargs -I {} dirname {} | \
+		sort -u | \
+		fzf \
+			--prompt="Select git repository: " \
+			--preview="
+				echo -e '\033[0;34m{}\033[0m'
+				echo
+				if cd {} 2>/dev/null; then
+					echo -e '\033[0;32mGit Status:\033[0m'
+					git status --porcelain 2>/dev/null | head -5 || echo 'Clean working directory'
+					echo
+					echo -e '\033[0;32mRecent Commits:\033[0m'
+					git log --oneline -5 2>/dev/null || echo 'No commits'
+					echo
+					echo -e '\033[0;32mBranches:\033[0m'
+					git branch 2>/dev/null || echo 'No branches'
+				else
+					echo 'Cannot access directory'
+				fi
+			" \
+			--preview-window="right:50%" \
+			--height=70%
 	)
 
 	if [[ -z "$selected_dir" ]]; then
@@ -226,12 +73,7 @@ select_project_directory() {
 		exit 0
 	fi
 
-	# Return the full path
-	if [[ "$selected_dir" == "." ]]; then
-		echo "$base_dir"
-	else
-		echo "$base_dir/$selected_dir"
-	fi
+	echo "$selected_dir"
 }
 
 # Create project session
@@ -298,32 +140,17 @@ main() {
 		echo "Create a new tmux project session with nvim and terminal panes"
 		echo ""
 		echo "Options:"
-		echo "  -d, --dir BASE_DIR    Use fzf to select project from directories in BASE_DIR"
+		echo "  -d, --dir BASE_DIR    Browse directories in BASE_DIR with fzf"
 		echo "  -h, --help           Show this help message"
 		echo ""
 		echo "Arguments:"
-		echo "  session_name         Name for the tmux session (optional, will prompt if not provided)"
-		echo ""
-		echo "Environment Variables:"
-		echo "  PROJECT_IGNORE_DIRS  Newline-separated list of directory names to ignore"
-		echo "                       (overrides default ignore list)"
-		echo ""
-		echo "Default ignored directories:"
-		echo "  node_modules, target, build, dist, .git, .svn, .hg, vendor,"
-		echo "  __pycache__, .pytest_cache, .venv, venv, .env, coverage,"
-		echo "  .nyc_output, .next, .nuxt, .cache, tmp, temp, logs,"
-		echo "  .DS_Store, Thumbs.db, .idea, .vscode, .vs, bin, obj,"
-		echo "  .gradle, .mvn, out, .terraform"
+		echo "  session_name         Name for the tmux session (optional, will use directory name)"
 		echo ""
 		echo "Examples:"
-		echo "  $0                              # Prompt for session name, use current directory"
-		echo "  $0 myproject                    # Use 'myproject' as session name, current directory"
-		echo "  $0 -d ~/code                    # Select project from ~/code using fzf, prompt for session name"
-		echo "  $0 -d ~/code myproject          # Select project from ~/code using fzf, use 'myproject' as session name"
-		echo "  $0 --dir ~/Documents/projects   # Select project from ~/Documents/projects using fzf"
-		echo ""
-		echo "  # Custom ignore list:"
-		echo "  PROJECT_IGNORE_DIRS=\$'node_modules\\ntarget\\nmy_custom_dir' $0 -d ~/code"
+		echo "  $0                              # Use current directory"
+		echo "  $0 myproject                    # Use current directory with session name 'myproject'"
+		echo "  $0 -d ~/code                    # Browse and select from ~/code"
+		echo "  $0 -d ~/code myproject          # Browse ~/code, use 'myproject' as session name"
 		exit 0
 		;;
 	-d | --dir)
@@ -335,10 +162,9 @@ main() {
 		session_name="${3:-}"
 		;;
 	"")
-		# No arguments, prompt for session name
-		echo -n "Enter session name: "
-		read -r session_name
+		# No arguments, use current directory
 		project_dir="$(pwd)"
+		session_name=$(basename "$project_dir")
 		;;
 	*)
 		# Single argument is session name
@@ -351,10 +177,9 @@ main() {
 	if [[ -n "$base_dir" ]]; then
 		project_dir=$(select_project_directory "$base_dir")
 
-		# If no session name provided, derive it from directory name
+		# If no session name provided, use directory name
 		if [[ -z "$session_name" ]]; then
-			local dir_name=$(basename "$project_dir")
-			session_name="$dir_name"
+			session_name=$(basename "$project_dir")
 		fi
 	fi
 
