@@ -58,33 +58,51 @@ echo 'alias p="~/path/to/project-session.sh -d ~/code"' >> ~/.bashrc
 
 ## Usage
 
-### Session Switcher
-
+### Command Line
 ```bash
-# Interactive session management
+# Session switcher - Interactive session management
 ./session-switcher.sh
 
-# Navigation:
-# ↑/↓: Navigate sessions
-# Enter: Switch to session
-# Ctrl-D: Delete session
-# Esc: Cancel
-```
+# Project session creator - Browse git repositories
+./project-session.sh -d ~/code
 
-### Project Session Creator
-
-```bash
 # Use current directory
 ./project-session.sh myproject
 
-# Browse projects in a directory
-./project-session.sh -d ~/code
-
-# Browse with specific session name
-./project-session.sh -d ~/code myproject
-
 # Show help
 ./project-session.sh --help
+```
+
+### tmux Hotkeys (Recommended)
+Add these bindings to your `~/.config/tmux/tmux.conf`:
+
+```bash
+# Project session creator - browse git repos and create sessions
+bind-key o display-popup -E -w 80% -h 70% "~/path/to/better-sessions/project-session.sh -d ~/code"
+
+# Session switcher - manage existing sessions  
+bind-key O display-popup -E -w 80% -h 70% "~/path/to/better-sessions/session-switcher.sh"
+```
+
+Then reload tmux config: `tmux source-file ~/.config/tmux/tmux.conf`
+
+**Hotkeys:**
+- **`Ctrl-Space + o`** (lowercase) → Project creator popup (browse git repos)
+- **`Ctrl-Space + O`** (uppercase) → Session switcher popup (manage sessions)
+
+### Navigation
+```bash
+# Session Switcher:
+# ↑/↓: Navigate sessions
+# Enter: Switch to session  
+# Ctrl-D: Delete session
+# Esc: Cancel
+
+# Project Creator:
+# ↑/↓: Navigate git repositories
+# Enter: Create session with repo name
+# Esc: Cancel
+# Preview shows: git status, recent commits, branches
 ```
 
 ## Layout Created
@@ -147,9 +165,10 @@ export PROJECT_IGNORE_DIRS=$'node_modules\ntarget\nmy_custom_dir'
 ## Why These Choices?
 
 - **fzf**: Because interactive selection beats typing paths
-- **ripgrep**: Blazingly fast, even on huge codebases
-- **Git boundaries**: Prevents diving into submodules/subdirectories
-- **Project detection**: Only shows actual workable projects
+- **ripgrep**: Blazingly fast, even on huge codebases  
+- **Git repositories only**: No clutter, only actual projects
+- **tmux popups**: Access from anywhere without finding a terminal
+- **Git previews**: See repo status before switching
 - **Nvim + terminal**: My preferred dev layout (75% editor, 25% terminal)
 
 ## Making It Yours
